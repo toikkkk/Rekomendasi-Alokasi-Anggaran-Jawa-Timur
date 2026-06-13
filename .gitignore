@@ -1,0 +1,124 @@
+# ─────────────────────────────────────────
+# PYTHON
+# ─────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.installed.cfg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.env.bak
+
+# Distribution / packaging
+*.whl
+
+# pytest / testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+nosetests.xml
+coverage.xml
+*.cover
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# ─────────────────────────────────────────
+# DATA & MODEL — JANGAN DI-COMMIT
+# ─────────────────────────────────────────
+
+# Model hasil training (bisa di-generate ulang dengan ml/train.py)
+backend/models/*.pkl
+backend/models/*.joblib
+backend/models/*.h5
+
+# Raw data scraping (bisa di-generate ulang)
+data_apbd/
+data_bps/
+
+# Dataset mentah BPS (download manual)
+*.csv.bak
+
+# ─────────────────────────────────────────
+# ENVIRONMENT & SECRETS
+# ─────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+secrets/
+
+# ─────────────────────────────────────────
+# NODE / FRONTEND
+# ─────────────────────────────────────────
+frontend/node_modules/
+frontend/.next/
+frontend/dist/
+frontend/build/
+frontend/.cache/
+frontend/.vite/
+
+# npm / yarn
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# ─────────────────────────────────────────
+# IDE & EDITOR
+# ─────────────────────────────────────────
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ─────────────────────────────────────────
+# OS
+# ─────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+Desktop.ini
+$RECYCLE.BIN/
+ehthumbs.db
+
+# ─────────────────────────────────────────
+# LOGS
+# ─────────────────────────────────────────
+*.log
+logs/
+*.out
+
+# ─────────────────────────────────────────
+# SCRAPER OUTPUT (re-generatable)
+# ─────────────────────────────────────────
+data_apbd/*.csv
+data_bps/*.csv
+# Kecuali dataset final yang sudah dikurasi
+!data/dataset_final_jatim.csv

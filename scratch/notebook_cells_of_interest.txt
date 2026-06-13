@@ -1,0 +1,241 @@
+=== CELL 26 ===
+from sklearn.preprocessing import RobustScaler
+# Konstanta fitur tetap di ml/preprocessing.py agar bisa diimpor backend
+from ml.preprocessing import (
+    CLUSTER_FEATURES, REGRESSION_FEATURES, REGRESSION_FEATURES_KEMISKINAN,
+    TARGET_REG, TARGET_KEMISKINAN,
+)
+
+# ── 1. Load data mentah ───────────────────────────────────────────────────────
+df_raw = pd.read_csv(DATASET_PATH)
+
+# ── 2. Fix anomali pembiayaan Kab. Banyuwangi 2018 ───────────────────────────
+# Nilai asli: -17.890.035 miliar Rp — salah parse dari sumber DJPK
+df = df_raw.copy()
+mask_bwi = (df['nama_pemda'] == 'Kab. Banyuwangi') & (df['tahun'] == 2018)
+df.loc[mask_bwi, 'pembiayaan'] = np.nan
+df['pembiayaan'] = df.groupby('nama_pemda')['pembiayaan'].transform(
+    lambda s: s.fillna(s.median())
+)
+print('Anomali Banyuwangi 2018 → diimpute dengan median pembiayaan daerah tersebut.')
+
+# ── 3. Drop tahun 2013 ────────────────────────────────────────────────────────
+df = df[df['tahun'] != 2013].copy().reset_index(drop=True)
+print(f'Training set: {len(df)} baris ({df["tahun"].min()}–{df["tahun"].max()})')
+
+# ── 4. Pilih fitur ────────────────────────────────────────────────────────────
+X_cluster_df = df[CLUSTER_FEATURES].copy()
+
+reg_cols     = REGRESSION_FEATURES + [TARGET_REG, TARGET_KEMISKINAN]
+df_reg       = df[reg_cols].dropna().copy()
+X_reg_df     = df_reg[REGRESSION_FEATURES].copy()
+df_reg_index = df_reg.index          # dipakai untuk align klaster ↔ regression
+
+print(f'Baris regression (setelah dropna): {len(df_reg)}')
+print(f'Fitur clustering : {len(CLUSTER_FEATURES)}')
+print(f'Fitur regression : {len(REGRESSION_FEATURES)}')
+
+# ── 5. Fit RobustScaler untuk clustering ──────────────────────────────────────
+scaler_cluster   = RobustScaler().fit(X_cluster_df)
+X_cluster_scaled = scaler_cluster.transform(X_cluster_df)
+
+# ── 6. Validasi ───────────────────────────────────────────────────────────────
+assert len(df) == 190,                        f'Expected 190 baris, got {len(df)}'
+assert X_cluster_scaled.shape == (190, 10),   f'Shape salah: {X_cluster_scaled.shape}'
+assert not np.isnan(X_cluster_scaled).any(),  'X_cluster mengandung NaN!'
+
+print(f'\n=== Validasi Output Preprocessing ===')
+print(f'  Training set     : {len(df)} baris')
+print(f'  X_cluster shape  : {X_cluster_scaled.shape}')
+print(f'  NaN di X_cluster : {int(np.isnan(X_cluster_scaled).sum())}')
+print('[Preprocessing] OK')
+
+df_clean = df   # alias untuk kompatibilitas sel berikutnya
+
+================================================================================
+
+=== CELL 39 ===
+import warnings; warnings.filterwarnings('ignore')
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import RobustScaler
+from sklearn.base import clone
+from sklearn.model_selection import cross_val_score, KFold
+from sklearn.ensemble import RandomForestRegressor, ExtraTreesRegressor, GradientBoostingRegressor
+from sklearn.linear_model import Ridge, Lasso, LinearRegression
+from sklearn.neighbors import KNeighborsRegressor
+
+# ── Katalog kandidat model ────────────────────────────────────────────────────
+def _candidate_models():
+    return {
+        'Random Forest':     RandomForestRegressor(n_estimators=200, min_samples_leaf=2, random_state=42),
+        'Extra Trees':       ExtraTreesRegressor(n_estimators=200, min_samples_leaf=2, random_state=42),
+        'Gradient Boosting': GradientBoostingRegressor(n_estimators=100, max_depth=4, random_state=42),
+        'Ridge':             Ridge(alpha=1.0),
+        'Lasso':             Lasso(alpha=0.01, max_iter=5000),
+        'KNN (k=5)':         KNeighborsRegressor(n_neighbors=5),
+        'Linear Regression': LinearRegression(),
+    }
+
+def compare_models(X_df, y, cv=5):
+    """Bandingkan semua kandidat via CV; kembalikan DataFrame diurutkan R² turun."""
+    rows = []
+    kf   = KFold(n_splits=cv, shuffle=True, random_state=42)
+    for name, model in _candidate_models().items():
+        pipe = Pipeline([('scaler', RobustScaler()), ('model', clone(model))])
+        r2s  = cross_val_score(pipe, X_df, y, cv=kf, scoring='r2')
+        maes = -cross_val_score(pipe, X_df, y, cv=kf, scoring='neg_mean_absolute_error')
+        rows.append({'Model': name,
+                     'R²': round(r2s.mean(), 4), 'R² std': round(r2s.std(), 4),
+                     'MAE': round(maes.mean(), 4), 'MAE std': round(maes.std(), 4)})
+    return pd.DataFrame(rows).sort_values('R²', ascending=False).reset_index(drop=True)
+
+def finalize_model(X_df, y, best_name):
+    """Latih model terbaik pada SELURUH data klaster (finalisasi)."""
+    pipe = Pipeline([('scaler', RobustScaler()), ('model', clone(_candidate_models()[best_name]))])
+    pipe.fit(X_df, y)
+    return pipe
+
+# ── Loop per klaster ─────────────────────────────────────────────────────────
+cluster_labels = df_clustered.loc[df_reg_index, 'klaster'].values
+y_ipm_arr      = df_clean.loc[df_reg_index, TARGET_REG].values
+y_kem_arr      = df_clean.loc[df_reg_index, TARGET_KEMISKINAN].values
+
+regressors_ipm = {}; regressors_kemiskinan = {}
+metrics = {}; importances = {}; cluster_medians = {}; comparison_tables = {}
+
+for k_id in sorted(set(cluster_labels)):
+    mask = cluster_labels == k_id
+    n_k  = int(mask.sum())
+    cv   = min(5, max(2, n_k // 8))
+
+    print(f'\n{"="*60}')
+    print(f'  Klaster {k_id}  —  {n_k} baris  |  {cv}-fold CV')
+    print(f'{"="*60}')
+
+    X_ipm_k = X_reg_df[mask].copy()
+    X_kem_k = X_reg_df[mask][REGRESSION_FEATURES_KEMISKINAN].copy()
+    y_ipm_k = y_ipm_arr[mask]
+    y_kem_k = y_kem_arr[mask]
+
+    if n_k >= 10:
+        print('  [IPM] Membandingkan model...')
+        tbl_ipm           = compare_models(X_ipm_k, y_ipm_k, cv=cv)
+        comparison_tables[k_id] = tbl_ipm
+        best_ipm          = tbl_ipm.iloc[0]['Model']
+        print(tbl_ipm.to_string(index=False))
+        print(f'\n  → Terpilih (IPM)       : {best_ipm}  R²={tbl_ipm.iloc[0]["R²"]}')
+
+        tbl_kem  = compare_models(X_kem_k, y_kem_k, cv=cv)
+        best_kem = tbl_kem.iloc[0]['Model']
+        print(f'  → Terpilih (Kemiskinan): {best_kem}  R²={tbl_kem.iloc[0]["R²"]}')
+
+        metrics[k_id] = {'n': n_k, 'cv': cv, 'model_ipm': best_ipm,
+                         'R2': tbl_ipm.iloc[0]['R²'], 'MAE': tbl_ipm.iloc[0]['MAE'],
+                         'model_kemiskinan': best_kem}
+    else:
+        best_ipm = best_kem = 'Random Forest'
+        metrics[k_id] = {'n': n_k, 'note': 'micro-cluster', 'model_ipm': 'Random Forest'}
+        print('  Micro-cluster → Random Forest langsung')
+
+    regressors_ipm[k_id]        = finalize_model(X_ipm_k, y_ipm_k, best_ipm)
+    regressors_kemiskinan[k_id] = finalize_model(X_kem_k, y_kem_k, best_kem)
+
+    try:
+        last = regressors_ipm[k_id][-1]
+        importances[k_id] = dict(zip(REGRESSION_FEATURES[:len(last.feature_importances_)],
+                                     last.feature_importances_.tolist())) \
+                            if hasattr(last, 'feature_importances_') \
+                            else {f: 0.0 for f in REGRESSION_FEATURES}
+    except Exception:
+        importances[k_id] = {f: 0.0 for f in REGRESSION_FEATURES}
+
+    cluster_medians[k_id] = {col: float(df_clean.loc[df_reg_index[mask], col].median())
+                              for col in REGRESSION_FEATURES}
+
+print('\n\n[Model Comparison] Selesai.')
+
+================================================================================
+
+=== CELL 45 ===
+FEAT_LABELS = {
+    'rasio_pegawai_pct':'Pegawai', 'rasio_modal_pct':'Modal',
+    'rasio_barang_jasa_pct':'Brg & Jasa', 'rasio_bansos_pct':'Bansos',
+    'rasio_hibah_pct':'Hibah', 'rasio_bantuan_keu_pct':'Bantuan Keu',
+    'ipm_lag1':'IPM lag1', 'kemiskinan_lag1':'Kemiskinan lag1',
+    'delta_kemiskinan':'ΔKemiskinan', 'tpt':'TPT',
+    'pdrb_per_kapita':'PDRB/kapita', 'belanja_per_pdrb':'Belanja/PDRB',
+}
+plot_clusters = [k for k, imp in importances.items() if any(v > 0 for v in imp.values())]
+if not plot_clusters:
+    print('Feature importance tidak tersedia (model tidak berbasis pohon).')
+else:
+    n_cols = min(2, len(plot_clusters))
+    n_rows = (len(plot_clusters) + n_cols - 1) // n_cols
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(7*n_cols, 4*n_rows), squeeze=False)
+    from matplotlib.patches import Patch
+    for idx, k_id in enumerate(plot_clusters):
+        ax  = axes[idx // n_cols][idx % n_cols]
+        imp = importances[k_id]
+        labels = [FEAT_LABELS.get(f, f) for f in REGRESSION_FEATURES]
+        values = [imp.get(f, 0) for f in REGRESSION_FEATURES]
+        si = np.argsort(values)
+        colors = ['#e74c3c' if REGRESSION_FEATURES[i] in RASIO_COLS else '#3498db' for i in si]
+        ax.barh([labels[i] for i in si], [values[i] for i in si], color=colors, edgecolor='white')
+        ax.set_title(f'Klaster {k_id}  |  {metrics[k_id].get("model_ipm","—")}')
+        ax.set_xlabel('Feature Importance')
+    fig.legend(handles=[Patch(facecolor='#e74c3c', label='Rasio belanja'),
+                         Patch(facecolor='#3498db', label='Konteks sosek')],
+               loc='lower right', fontsize=9)
+    for idx in range(len(plot_clusters), n_rows*n_cols):
+        axes[idx//n_cols][idx%n_cols].set_visible(False)
+    plt.suptitle('Feature Importance — Model Terpilih per Klaster', fontsize=13)
+    plt.tight_layout(); plt.show()
+
+================================================================================
+
+=== CELL 49 ===
+import joblib
+from pathlib import Path
+
+MODEL_PATH = ROOT / 'backend' / 'models' / 'ml_models.pkl'
+MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+artifact = {
+    # Clustering
+    'scaler_cluster':   scaler_cluster,
+    'kmeans':           kmeans,
+    'k':                k_optimal,
+    'cluster_profiles': profiles,
+    'df_clustered':     df_clustered,
+    # Regression — sklearn Pipeline(RobustScaler + best model) per klaster
+    'regressors_ipm':        regressors_ipm,
+    'regressors_kemiskinan': regressors_kemiskinan,
+    # Metadata
+    'feature_names': {
+        'cluster':               CLUSTER_FEATURES,
+        'regression':            REGRESSION_FEATURES,
+        'regression_kemiskinan': REGRESSION_FEATURES_KEMISKINAN,
+    },
+    'metrics':         metrics,
+    'importances':     importances,
+    'cluster_medians': cluster_medians,
+}
+
+joblib.dump(artifact, MODEL_PATH)
+print(f'Artifact disimpan ke : {MODEL_PATH}')
+print(f'Ukuran file          : {MODEL_PATH.stat().st_size / 1024:.1f} KB')
+
+print('\n=== Ringkasan Pipeline ===')
+print(f'  Dataset      : 228 baris × 30 kolom (38 pemda × 6 tahun)')
+print(f'  Training set : {len(df_clean)} baris (2014–2018)')
+print(f'  Clustering   : K={k_optimal} klaster (silhouette={max(search["silhouette"]):.4f})')
+print()
+print('  Model terpilih per klaster:')
+for k_id, m in metrics.items():
+    if 'R2' in m:
+        print(f'    Klaster {k_id}: {m["model_ipm"]:20s}  R²={m["R2"]}  MAE={m["MAE"]}')
+    else:
+        print(f'    Klaster {k_id}: {m.get("model_ipm","RF"):20s}  ({m.get("note","micro-cluster")})')
+print('\n[Notebook] Selesai. Backend siap dijalankan dengan artifact baru.')
+
+================================================================================
