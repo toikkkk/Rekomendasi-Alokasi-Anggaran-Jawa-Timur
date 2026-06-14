@@ -37,6 +37,15 @@ app.include_router(rekomendasi.router, prefix="/api")
 app.include_router(simulasi.router, prefix="/api")
 
 
+@app.get("/api/cors-debug")
+def cors_debug():
+    return {
+        "frontend_url_env": os.getenv("FRONTEND_URL"),
+        "allowed_origins": origins,
+        "regex_pattern": "https://.*\\.vercel\\.app|http://localhost:\\d+"
+    }
+
+
 @app.get("/")
 def health_check():
     return {"status": "ok", "version": "0.1.0"}
