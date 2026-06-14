@@ -13,9 +13,19 @@ app = FastAPI(
     version="0.1.0",
 )
 
+# Konfigurasi CORS yang lebih fleksibel
+origins = ["http://localhost:5173", "http://localhost:3000"]
+frontend_url_env = os.getenv("FRONTEND_URL")
+if frontend_url_env:
+    # Memisahkan berdasarkan koma jika ada banyak URL, menghapus spasi, dan menghapus trailing slash '/'
+    for url in frontend_url_env.split(","):
+        clean_url = url.strip().rstrip("/")
+        if clean_url and clean_url not in origins:
+            origins.append(clean_url)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[os.getenv("FRONTEND_URL", "http://localhost:5173")],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
