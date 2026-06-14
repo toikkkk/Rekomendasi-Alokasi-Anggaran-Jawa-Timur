@@ -1,17 +1,7 @@
 {
   "$schema": "https://schema.railpack.com",
   "steps": {
-    "install": {
-      "commands": [
-        "pip install -r requirements.txt"
-      ]
-    },
     "build": {
-      "inputs": [
-        {
-          "step": "install"
-        }
-      ],
       "commands": [
         "python -m ml.train"
       ]
